@@ -221,5 +221,43 @@ describe("Scope", function() {
             scope.$digest();
             expect(scope.counter).toBe(1);
         });
+
+        it("executes $eval'd function and returns result", function() {
+            scope.aValue = 42;
+
+            var result = scope.$eval(function(scope) {
+                return scope.aValue;
+            });
+
+            expect(result).toBe(42);
+        });
+
+        it("passes the second $eval argument straight through", function() {
+            scope.aValue = 42;
+
+            var  result = scope.$eval(function(scope, arg) {
+                return scope.aValue + arg;
+            }, 2);
+
+            expect(result).toBe(44);
+        });
+
+        it("executes $apply'd fn and starts the digest", function() {
+            scope.aValue = 'someValue';
+            scope.counter = 0;
+
+            scope.$watch(
+                function(scope) { return scope.aValue; },
+                function(newVal, oldVal, scope) { scope.counter++; }
+            );
+
+            scope.$digest();
+            expect(scope.counter).toBe(1);
+
+            scope.$apply(function(scope) {
+                scope.aValue = 'someOtherValue';
+            });
+            expect(scope.counter).toBe(2);
+        });
     });
 });
