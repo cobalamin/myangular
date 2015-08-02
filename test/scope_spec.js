@@ -35,6 +35,7 @@ describe("Scope", function() {
             scope.$digest();
 
             expect(watchFn).toHaveBeenCalledWith(scope);
+
         });
 
         it("calls the listener fn when the watched value changes", function() {
@@ -165,6 +166,60 @@ describe("Scope", function() {
             scope.array[0] = 420;
             scope.$digest();
             expect(watchExecutions).toBe(301);
+        });
+
+        it("does not end digest so that new watches are not run", function() {
+            scope.aValue = 'abc';
+            scope.counter = 0;
+
+            scope.$watch(
+                function(scope) { return scope.aValue; },
+                function(newValue, oldValue, scope) {
+                    scope.$watch(
+                        function(scope) { return scope.aValue; },
+                        function(newValue, oldValue, scope) {
+                            scope.counter++;
+                        }
+                    );
+                }
+            );
+
+            scope.$digest();
+            expect(scope.counter).toBe(1);
+        });
+
+        it("compares based on value if enabled", function() {
+            scope.aValue = [1,2,3];
+            scope.counter = 0;
+
+            scope.$watch(
+                function(scope) { return scope.aValue; },
+                function(newVal, oldVal, scope) { scope.counter++; },
+                true
+            );
+
+            scope.$digest();
+            expect(scope.counter).toBe(1);
+
+            scope.aValue.push(4);
+            scope.$digest();
+            expect(scope.counter).toBe(2);
+        });
+
+        it("correctly handles NaNs", function() {
+            scope.number = NaN;
+            scope.counter = 0;
+
+            scope.$watch(
+                function(scope) { return scope.number; },
+                function(newVal, oldVal, scope) { scope.counter++; }
+            );
+
+            scope.$digest();
+            expect(scope.counter).toBe(1);
+
+            scope.$digest();
+            expect(scope.counter).toBe(1);
         });
     });
 });
