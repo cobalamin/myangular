@@ -373,5 +373,74 @@ describe("Scope", function() {
         done();
       }, 0);
     });
+
+    it("allows async $apply with $applyAsync", function (done) {
+      scope.counter = 0;
+
+      scope.$watch(
+        function (scope) { return scope.aValue; },
+        function (newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      scope.$digest();
+      expect(scope.counter).toBe(1);
+
+      scope.$applyAsync(function (scope) {
+        scope.aValue = 'abc';
+      });
+      expect(scope.counter).toBe(1);
+
+      setTimeout(function () {
+        expect(scope.counter).toBe(2);
+        done();
+      }, 0);
+    });
+
+    it("never executes $applyAsync'd fn in the same cycle", function (done) {
+      scope.aValue = [1,2,3];
+      scope.asyncApplied = false;
+
+      scope.$watch(
+        function (scope) { return scope.aValue; },
+        function (newVal, oldVal, scope) {
+          scope.$applyAsync(function (scope) {
+            scope.asyncApplied = true;
+          });
+        }
+      );
+
+      scope.$digest();
+      expect(scope.asyncApplied).toBe(false);
+      setTimeout(function () {
+        expect(scope.asyncApplied).toBe(true);
+        done();
+      }, 0);
+    });
+
+    it("coalesces many calls to $applyAsync", function (done) {
+      scope.counter = 0;
+
+      scope.$watch(
+        function (scope) {
+          scope.counter++;
+          return scope.aValue;
+        },
+        function (newVal, oldVal, scope) {}
+      );
+
+      scope.$applyAsync(function (scope) {
+        scope.aValue = 'abc';
+      });
+      scope.$applyAsync(function (scope) {
+        scope.aValue = 'def';
+      });
+
+      setTimeout(function () {
+        expect(scope.counter).toBe(2);
+        done();
+      }, 0);
+    });
   });
 });
