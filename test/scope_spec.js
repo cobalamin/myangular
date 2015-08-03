@@ -697,8 +697,125 @@ describe("Scope", function() {
       scope.$digest();
       expect(scope.counter).toBe(0);
     });
+  });
 
+  describe('$watchGroup', function () {
+    var scope;
+    beforeEach(function () {
+      scope = new Scope();
+    });
 
+    it("takes watches as an array and calls listener with arrays", function () {
+      var gotNewValues, gotOldValues;
 
+      scope.aValue = 1;
+      scope.bValue = 2;
+
+      scope.$watchGroup([
+        function (scope) { return scope.aValue; },
+        function (scope) { return scope.bValue; }
+      ], function (newVals, oldVals, scope) {
+        gotNewValues = newVals;
+        gotOldValues = oldVals;
+      });
+
+      scope.$digest();
+      expect(gotNewValues).toEqual([1,2]);
+      expect(gotOldValues).toEqual([1,2]);
+    });
+
+    it("only calls listener once per digest", function () {
+      var counter = 0;
+
+      scope.aValue = 1;
+      scope.bValue = 2;
+
+      scope.$watchGroup([
+        function (scope) { return scope.aValue; },
+        function (scope) { return scope.bValue; }
+      ], function (newVals, oldVals, scope) {
+        counter++;
+      });
+
+      scope.$digest();
+      expect(counter).toEqual(1);
+    });
+
+    it("uses the same array of old and new values on first run", function () {
+      var gotNewValues, gotOldValues;
+
+      scope.aValue = 1;
+      scope.anotherValue = 2;
+
+      scope.$watchGroup([
+        function (scope) { return scope.aValue; },
+        function (scope) { return scope.anotherValue; }
+      ], function (newVals, oldVals, scope) {
+        gotNewValues = newVals;
+        gotOldValues = oldVals;
+      });
+
+      scope.$digest();
+      expect(gotNewValues).toBe(gotOldValues);
+    });
+
+    it("uses different arrays for old and new values on subsequent runs", function () {
+      var gotNewValues, gotOldValues;
+
+      scope.aValue = 1;
+      scope.anotherValue = 2;
+
+      scope.$watchGroup([
+        function (scope) { return scope.aValue; },
+        function (scope) { return scope.anotherValue; }
+      ], function (newVals, oldVals, scope) {
+        gotNewValues = newVals;
+        gotOldValues = oldVals;
+      });
+
+      scope.$digest();
+
+      scope.anotherValue = 3;
+      scope.$digest();
+
+      expect(gotNewValues).not.toBe(gotOldValues);
+      expect(gotNewValues).toEqual([1, 3]);
+      expect(gotOldValues).toEqual([1, 2]);
+    });
+
+    it("calls the listener once when the watch array is empty", function () {
+      var gotNewValues, gotOldValues;
+
+      scope.$watchGroup([], function(newVals, oldVals, scope) {
+        gotNewValues = newVals;
+        gotOldValues = oldVals;
+      });
+
+      scope.$digest();
+      expect(gotNewValues).toEqual([]);
+      expect(gotOldValues).toEqual([]);
+    });
+
+    it("can be deregistered", function () {
+      var counter = 0;
+
+      scope.aValue = 1;
+      scope.bValue = 2;
+
+      var destroyGroup = scope.$watchGroup([
+        function (scope) { return scope.aValue; },
+        function (scope) { return scope.bValue; }
+      ], function (newVals, oldVals, scope) {
+        counter++;
+      });
+
+      scope.$digest();
+
+      scope.anotherValue = 3;
+      destroyGroup();
+      scope.$digest();
+
+      expect(counter).toEqual(1);
+    });
   });
 });
