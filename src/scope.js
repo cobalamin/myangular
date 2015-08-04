@@ -13,13 +13,14 @@ function Scope() {
 
   this.$$postDigestQueue = [];
 
+  this.$root = this;
+  this.$$children = [];
+
   this.$$phase = null;
 }
 
 // === Watch ===
 Scope.prototype.$watch = function(watchFn, listenerFn, valueEq) {
-  var self = this;
-
   var watcher = {
     watchFn: watchFn,
     listenerFn: listenerFn || function(){},
@@ -28,15 +29,15 @@ Scope.prototype.$watch = function(watchFn, listenerFn, valueEq) {
   };
 
   this.$$watchers.unshift(watcher);
-  this.$$lastDirtyWatch = null;
+  this.$root.$$lastDirtyWatch = null;
 
-  return function() {
-    var index = self.$$watchers.indexOf(watcher);
+  return _.bind(function() {
+    var index = this.$$watchers.indexOf(watcher);
     if (index >= 0) {
-      self.$$watchers.splice(index, 1);
-      self.$$lastDirtyWatch = null;
+      this.$$watchers.splice(index, 1);
+      this.$root.$$lastDirtyWatch = null;
     }
-  };
+  }, this);
 };
 
 Scope.prototype.$watchGroup = function (watchFns, listenerFn) {
@@ -88,7 +89,7 @@ Scope.prototype.$watchGroup = function (watchFns, listenerFn) {
 Scope.prototype.$digest = function() {
   var ttl = 10;
   var dirty;
-  this.$$lastDirtyWatch = null;
+  this.$root.$$lastDirtyWatch = null;
   this.$beginPhase('$digest');
 
   if (this.$$applyAsyncId) {
@@ -127,32 +128,39 @@ Scope.prototype.$digest = function() {
 };
 
 Scope.prototype.$$digestOnce = function() {
-  var self = this;
-  var newValue, oldValue, dirty = false;
+  var continueLoop = true;
+  var dirty = false;
 
-  _.forEachRight(this.$$watchers, function(watcher) {
-    if(watcher) {
-      try {
-        newValue = watcher.watchFn(self);
-        oldValue = watcher.last;
+  this.$$everyScope(function (scope) {
+    var newValue, oldValue;
 
-        if (!self.$$areEqual(newValue, oldValue, watcher.valueEq)) {
-          self.$$lastDirtyWatch = watcher;
+    _.forEachRight(scope.$$watchers, function (watcher) {
+      if(watcher) {
+        try {
+          newValue = watcher.watchFn(scope);
+          oldValue = watcher.last;
 
-          watcher.last = (watcher.valueEq ? _.cloneDeep(newValue) : newValue);
-          watcher.listenerFn(newValue,
-            oldValue === initWatchVal ? newValue : oldValue,
-            self);
+          if (!scope.$$areEqual(newValue, oldValue, watcher.valueEq)) {
+            scope.$root.$$lastDirtyWatch = watcher;
 
-            dirty = true;
+            watcher.last = (watcher.valueEq ? _.cloneDeep(newValue) : newValue);
+            watcher.listenerFn(newValue,
+              (oldValue === initWatchVal ? newValue : oldValue),
+              scope);
+
+              dirty = true;
+          }
+          else if (scope.$root.$$lastDirtyWatch === watcher) {
+            continueLoop = false;
+            return false;
+          }
+        } catch (e) {
+          console.error(e);
         }
-        else if (self.$$lastDirtyWatch === watcher) {
-          return false;
-        }
-      } catch (e) {
-        console.error(e);
       }
-    }
+    });
+
+    return continueLoop;
   });
 
   return dirty;
@@ -162,6 +170,12 @@ Scope.prototype.$$postDigest = function (fn) {
   this.$$postDigestQueue.push(fn);
 };
 
+Scope.prototype.$$everyScope = function (fn) {
+  return fn(this) && _.every(this.$$children, function (child) {
+    return child.$$everyScope(fn);
+  });
+};
+
 // === Apply ===
 Scope.prototype.$apply = function(expr) {
   try {
@@ -169,7 +183,7 @@ Scope.prototype.$apply = function(expr) {
     return this.$eval(expr);
   } finally {
     this.$clearPhase();
-    this.$digest();
+    this.$root.$digest();
   }
 };
 
@@ -206,7 +220,7 @@ Scope.prototype.$evalAsync = function(expr) {
   if(!this.$$phase && !this.$$asyncQueue.length) {
     setTimeout(_.bind(function () {
       if (this.$$asyncQueue.length) {
-        this.$digest();
+        this.$root.$digest();
       }
     }, this), 0);
   }
@@ -235,4 +249,14 @@ Scope.prototype.$beginPhase = function (phase) {
 
 Scope.prototype.$clearPhase = function () {
   this.$$phase = null;
+};
+
+// === Child Scopes ===
+Scope.prototype.$new = function () {
+  var child = Object.create(this);
+  child.$$watchers = [];
+  child.$$children = [];
+
+  this.$$children.push(child);
+  return child;
 };
