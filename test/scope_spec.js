@@ -1131,5 +1131,31 @@ describe("Scope", function() {
       hierarchyParent.$digest();
       expect(child.counter).toBe(2);
     });
+
+    it("is no longer digested when $destroy has been called", function () {
+      var child = parent.$new();
+
+      child.aValue = [1,2,3];
+      child.counter = 0;
+      child.$watch(
+        function (scope) { return scope.aValue; },
+        function (newVal, oldVal, scope) {
+          scope.counter++;
+        },
+        true
+      );
+
+      parent.$digest();
+      expect(child.counter).toBe(1);
+
+      child.aValue.push(4);
+      parent.$digest();
+      expect(child.counter).toBe(2);
+
+      child.$destroy();
+      child.aValue.push(5);
+      parent.$digest();
+      expect(child.counter).toBe(2);
+    });
   });
 });
