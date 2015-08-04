@@ -832,8 +832,12 @@ describe("Scope", function() {
   });
 
   describe("inheritance", function () {
+    var parent;
+    beforeEach(function () {
+      parent = new Scope();
+    });
+
     it("inherits the parent's properties", function () {
-      var parent = new Scope();
       parent.aValue = [1,2,3];
 
       var child = parent.$new();
@@ -841,8 +845,6 @@ describe("Scope", function() {
     });
 
     it("does not cause a parent to inherit its properties", function () {
-      var parent = new Scope();
-
       var child = parent.$new();
       child.aValue = [1,2,3];
 
@@ -850,7 +852,6 @@ describe("Scope", function() {
     });
 
     it("inherits the parent's properties whenever they are defined", function () {
-      var parent = new Scope();
       var child = parent.$new();
       parent.aValue = [1,2,3];
 
@@ -858,7 +859,6 @@ describe("Scope", function() {
     });
 
     it("can manipulate a parent scope's property", function () {
-      var parent = new Scope();
       var child = parent.$new();
       parent.aValue = [1,2,3];
 
@@ -868,7 +868,6 @@ describe("Scope", function() {
     });
 
     it("can watch a property in the parent", function () {
-      var parent = new Scope();
       var child = parent.$new();
       parent.aValue = [1,2,3];
       child.counter = 0;
@@ -913,7 +912,6 @@ describe("Scope", function() {
     });
 
     it("shadows a parent's property with the same name", function () {
-      var parent = new Scope();
       var child = parent.$new();
 
       parent.name = "Joe";
@@ -924,7 +922,6 @@ describe("Scope", function() {
     });
 
     it("does not shadow members of parent scope's attributes", function () {
-      var parent = new Scope();
       var child = parent.$new();
 
       parent.user = { name: "Joe" };
@@ -935,7 +932,6 @@ describe("Scope", function() {
     });
 
     it("does not digest its parent(s)", function () {
-      var parent = new Scope();
       var child = parent.$new();
 
       parent.aValue = "abc";
@@ -951,7 +947,6 @@ describe("Scope", function() {
     });
 
     it("keeps a record of its children", function () {
-      var parent = new Scope();
       var child1 = parent.$new();
       var child2 = parent.$new();
       var child2_1 = child2.$new();
@@ -967,7 +962,6 @@ describe("Scope", function() {
     });
 
     it("digests its children", function () {
-      var parent = new Scope();
       var child = parent.$new();
 
       parent.aValue = "abc";
@@ -983,7 +977,6 @@ describe("Scope", function() {
     });
 
     it("digests from root on $apply", function () {
-      var parent = new Scope();
       var child = parent.$new();
       var child2 = child.$new();
 
@@ -1002,7 +995,6 @@ describe("Scope", function() {
     });
 
     it("schedules a digest from root on $evalAsync", function (done) {
-      var parent = new Scope();
       var grandchild = (parent.$new()).$new();
 
       parent.aValue = "abc";
@@ -1020,6 +1012,124 @@ describe("Scope", function() {
         expect(parent.counter).toBe(1);
         done();
       }, 0);
+    });
+
+    it("does not have access to parent attributes when isolated", function () {
+      var child = parent.$new(true);
+      parent.aValue = "abc";
+
+      expect(child.aValue).toBeUndefined();
+    });
+
+    it("cannot watch parent attributes when isolated", function () {
+      var child = parent.$new(true);
+
+      parent.aValue = 'abc';
+      child.$watch(
+        function (scope) { return scope.aValue; },
+        function (newVal, oldVal, scope) {
+          scope.aValueWas = newVal;
+        }
+      );
+
+      child.$digest();
+      expect(child.aValueWas).toBeUndefined();
+    });
+
+    it("digests its isolated children", function () {
+      var child = parent.$new(true);
+
+      child.aValue = "abc";
+      child.$watch(
+        function (scope) { return scope.aValue; },
+        function (newVal, oldVal, scope) {
+          scope.aValueWas = newVal;
+        }
+      );
+
+      parent.$digest();
+      expect(child.aValueWas).toBe("abc");
+    });
+
+    it("digests from root on $apply when isolated", function () {
+      var grandchild = (parent.$new(true)).$new();
+
+      parent.aValue = "abc";
+      parent.counter = 0;
+      parent.$watch(
+        function (scope) { return scope.aValue; },
+        function (newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      grandchild.$apply(function(){});
+
+      expect(parent.counter).toBe(1);
+    });
+
+    it("schedules a digest from root on $evalAsync when isolated", function (done) {
+      var grandchild = (parent.$new(true)).$new();
+
+      parent.aValue = "abc";
+      parent.counter = 0;
+      parent.$watch(
+        function (scope) { return scope.aValue; },
+        function (newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      grandchild.$evalAsync(function(){});
+
+      setTimeout(function () {
+        expect(parent.counter).toBe(1);
+        done();
+      }, 0);
+    });
+
+    it("executes $evalAsync fns on isolated scopes", function (done) {
+      var child = parent.$new(true);
+
+      child.$evalAsync(function (scope) {
+        scope.didEvalAsync = true;
+      });
+
+      setTimeout(function () {
+        expect(child.didEvalAsync).toBe(true);
+        done();
+      }, 0);
+    });
+
+    it("executes $$postDigest fns on isolated scopes", function () {
+      var child = parent.$new(true);
+
+      child.$$postDigest(function () {
+        child.didPostDigest = true;
+      });
+      parent.$digest();
+
+      expect(child.didPostDigest).toBe(true);
+    });
+
+    it("can take some other scope as the parent", function () {
+      var prototypeParent = new Scope();
+      var hierarchyParent = new Scope();
+      var child = prototypeParent.$new(false, hierarchyParent);
+
+      prototypeParent.a = 42;
+      expect(child.a).toBe(42);
+
+      child.counter = 0;
+      child.$watch(function (scope) {
+        scope.counter++;
+      });
+
+      prototypeParent.$digest();
+      expect(child.counter).toBe(0);
+
+      hierarchyParent.$digest();
+      expect(child.counter).toBe(2);
     });
   });
 });

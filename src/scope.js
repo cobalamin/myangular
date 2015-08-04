@@ -92,8 +92,8 @@ Scope.prototype.$digest = function() {
   this.$root.$$lastDirtyWatch = null;
   this.$beginPhase('$digest');
 
-  if (this.$$applyAsyncId) {
-    clearTimeout(this.$$applyAsyncId);
+  if (this.$root.$$applyAsyncId) {
+    clearTimeout(this.$root.$$applyAsyncId);
     this.$$flushApplyAsync();
   }
 
@@ -188,14 +188,13 @@ Scope.prototype.$apply = function(expr) {
 };
 
 Scope.prototype.$applyAsync = function (expr) {
-  var self = this;
-  self.$$applyAsyncQueue.push(function () {
-    self.$eval(expr);
-  });
-  if (self.$$applyAsyncId === null) {
-    self.$$applyAsyncId = setTimeout(function () {
-      self.$apply(_.bind(self.$$flushApplyAsync, self));
-    }, 0);
+  this.$$applyAsyncQueue.push(_.bind(function () {
+    this.$eval(expr);
+  }, this));
+  if (this.$root.$$applyAsyncId === null) {
+    this.$root.$$applyAsyncId = setTimeout(_.bind(function () {
+      this.$apply(_.bind(this.$$flushApplyAsync, this));
+    }, this), 0);
   }
 };
 
@@ -208,7 +207,7 @@ Scope.prototype.$$flushApplyAsync = function () {
       console.error(e);
     }
   }
-  this.$$applyAsyncId = null;
+  this.$root.$$applyAsyncId = null;
 };
 
 // === Eval ===
@@ -252,11 +251,24 @@ Scope.prototype.$clearPhase = function () {
 };
 
 // === Child Scopes ===
-Scope.prototype.$new = function () {
-  var child = Object.create(this);
-  child.$$watchers = [];
-  child.$$children = [];
+Scope.prototype.$new = function (isolated, parent) {
+  var child;
+  parent = parent || this;
 
-  this.$$children.push(child);
+  if (isolated) {
+    child = new Scope();
+    child.$root = parent.$root;
+    child.$$asyncQueue = parent.$$asyncQueue;
+    child.$$postDigestQueue = parent.$$postDigestQueue;
+    child.$$applyAsyncQueue = parent.$$applyAsyncQueue;
+  }
+  else {
+    child = Object.create(this);
+    // Shadowing these properties
+    child.$$watchers = [];
+    child.$$children = [];
+  }
+
+  parent.$$children.push(child);
   return child;
 };
