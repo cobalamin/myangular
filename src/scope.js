@@ -89,8 +89,10 @@ Scope.prototype.$watchGroup = function(watchFns, listenerFn) {
 Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
   var newVal, oldVal;
   var changeCount = 0;
+  var oldLength;
 
   var internalWatchFn = _.bind(function(scope) {
+    var newLength;
     newVal = watchFn(scope);
 
     if (_.isObject(newVal)) {
@@ -117,20 +119,34 @@ Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
         if (!_.isObject(oldVal) || _.isArrayLike(oldVal)) {
           changeCount++;
           oldVal = {};
+          oldLength = 0;
         }
+        newLength = 0;
+
         _.forOwn(newVal, function(newItem, key) {
-          var bothNaN = _.isNaN(newItem) && _.isNaN(oldVal[key]);
-          if (!bothNaN && newItem !== oldVal[key]) {
+          newLength++;
+          if (oldVal.hasOwnProperty(key)) {
+            var bothNaN = _.isNaN(newItem) && _.isNaN(oldVal[key]);
+            if (!bothNaN && newItem !== oldVal[key]) {
+              changeCount++;
+              oldVal[key] = newItem;
+            }
+          } else {
             changeCount++;
+            oldLength++;
             oldVal[key] = newItem;
           }
         });
-        _.forOwn(oldVal, function(oldItem, key) {
-          if (!newVal.hasOwnProperty(key)) {
-            changeCount++;
-            delete oldVal[key];
-          }
-        });
+        if (oldLength > newLength) {
+          changeCount++;
+          _.forOwn(oldVal, function(oldItem, key) {
+            if (!newVal.hasOwnProperty(key)) {
+              oldLength--;
+              changeCount++;
+              delete oldVal[key];
+            }
+          });
+        }
       }
     } else {
       // Everything else (that's not actually a collection)!
