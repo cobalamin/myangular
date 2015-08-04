@@ -94,7 +94,8 @@ Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
     newVal = watchFn(scope);
 
     if (_.isObject(newVal)) {
-      if (_.isArray(newVal)) {
+      if (_.isArrayLike(newVal)) {
+        // Arrays!
         if (!_.isArray(oldVal)) {
           changeCount++;
           oldVal = [];
@@ -112,9 +113,27 @@ Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
           }
         });
       } else {
-
+        // Objects!
+        if (!_.isObject(oldVal) || _.isArrayLike(oldVal)) {
+          changeCount++;
+          oldVal = {};
+        }
+        _.forOwn(newVal, function(newItem, key) {
+          var bothNaN = _.isNaN(newItem) && _.isNaN(oldVal[key]);
+          if (!bothNaN && newItem !== oldVal[key]) {
+            changeCount++;
+            oldVal[key] = newItem;
+          }
+        });
+        _.forOwn(oldVal, function(oldItem, key) {
+          if (!newVal.hasOwnProperty(key)) {
+            changeCount++;
+            delete oldVal[key];
+          }
+        });
       }
     } else {
+      // Everything else (that's not actually a collection)!
       if (!this.$$areEqual(newVal, oldVal, false)) {
         changeCount++;
       }

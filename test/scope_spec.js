@@ -1332,5 +1332,155 @@ describe("Scope", function() {
       scope.$digest();
       expect(scope.counter).toBe(1);
     });
+
+    it("notices a replaced item in an arguments object", function() {
+      (function() {
+        scope.arrayLike = arguments;
+      })(1,2,3);
+      scope.counter = 0;
+
+      scope.$watchCollection(
+        function(scope) { return scope.arrayLike; },
+        function(newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      scope.$digest();
+      expect(scope.counter).toBe(1);
+
+      scope.arrayLike[1] = 42;
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+    });
+
+    it("notices an item replaced in a NodeList object", function() {
+      document.documentElement.appendChild(document.createElement('div'));
+      scope.arrayLike = document.getElementsByTagName('div');
+
+      scope.counter = 0;
+
+      scope.$watchCollection(
+        function(scope) { return scope.arrayLike; },
+        function(newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      scope.$digest();
+      expect(scope.counter).toBe(1);
+
+      document.documentElement.appendChild(document.createElement('div'));
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+    });
+
+    it("notices when the value becomes an object", function() {
+      scope.counter = 0;
+
+      scope.$watchCollection(
+        function(scope) { return scope.obj; },
+        function(newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      scope.$digest();
+      expect(scope.counter).toBe(1);
+
+      scope.obj = { a: 1 };
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+    });
+
+    it("notices when an attribute is added to an object", function() {
+      scope.counter = 0;
+      scope.obj = { a: 1 };
+
+      scope.$watchCollection(
+        function(scope) { return scope.obj; },
+        function(newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      scope.$digest();
+      expect(scope.counter).toBe(1);
+
+      scope.obj.b = 2;
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+    });
+
+    it("notices when an attribute is changed in an object", function() {
+      scope.counter = 0;
+      scope.obj = { a: 1 };
+
+      scope.$watchCollection(
+        function(scope) { return scope.obj; },
+        function(newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      scope.$digest();
+      expect(scope.counter).toBe(1);
+
+      scope.obj.a = 2;
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+    });
+
+    it("does not fail on NaN attributes in objects", function() {
+      scope.counter = 0;
+      scope.obj = { a: NaN };
+
+      scope.$watchCollection(
+        function(scope) { return scope.obj; },
+        function(newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      scope.$digest();
+      expect(scope.counter).toBe(1);
+    });
+
+    it("notices when an attribute is removed from an object", function() {
+      scope.counter = 0;
+      scope.obj = { a: 1 };
+
+      scope.$watchCollection(
+        function(scope) { return scope.obj; },
+        function(newVal, oldVal, scope) {
+          scope.counter++;
+        }
+      );
+
+      scope.$digest();
+      expect(scope.counter).toBe(1);
+
+      delete scope.obj.a;
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+
+      scope.$digest();
+      expect(scope.counter).toBe(2);
+    });
   });
 });
