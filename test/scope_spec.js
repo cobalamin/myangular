@@ -1697,6 +1697,29 @@ describe("Scope", function() {
 
           expect(nextListener).toHaveBeenCalled();
         });
+
+        it("sets defaultPrevented when preventDefault is called", function() {
+          var l = function(e) {
+            e.preventDefault();
+          };
+          scope.$on('someEvent', l);
+
+          var event = scope[method]('someEvent');
+          expect(event.defaultPrevented).toBe(true);
+        });
+
+        it("does not stop on exceptions", function() {
+          var l1 = function(e) {
+            throw new Error('listener 1 throwing an exception');
+          };
+          var l2 = jasmine.createSpy();
+          scope.$on('someEvent', l1);
+          scope.$on('someEvent', l2);
+
+          scope[method]('someEvent');
+
+          expect(l2).toHaveBeenCalled();
+        });
       });
     });
 
@@ -1768,6 +1791,33 @@ describe("Scope", function() {
         scope.$emit('someEvent');
 
         expect(event.currentScope).toBe(null);
+      });
+
+      it("does not propagate to parents when stopped", function() {
+        var scopeListener = function(e) {
+          e.stopPropagation();
+        };
+        var parentListener = jasmine.createSpy();
+
+        scope.$on('someEvent', scopeListener);
+        parent.$on('someEvent', parentListener);
+
+        scope.$emit('someEvent');
+        expect(parentListener).not.toHaveBeenCalled();
+      });
+
+      it("does pass the event to all listeners on the current scope after being stopped", function() {
+        var l1 = function(e) {
+          e.stopPropagation();
+        };
+        var l2 = jasmine.createSpy();
+
+        scope.$on('someEvent', l1);
+        scope.$on('someEvent', l2);
+
+        scope.$emit('someEvent');
+
+        expect(l2).toHaveBeenCalled();
       });
     });
 
@@ -1845,5 +1895,20 @@ describe("Scope", function() {
       });
     });
 
+    it("fires $destroy when destroyed", function() {
+      var l = jasmine.createSpy();
+      scope.$on('$destroy', l);
+
+      scope.$destroy();
+      expect(l).toHaveBeenCalled();
+    });
+
+    it("fires $destroy on children destroyed", function() {
+      var l = jasmine.createSpy();
+      child.$on('$destroy', l);
+
+      scope.$destroy();
+      expect(l).toHaveBeenCalled();
+    });
   });
 });

@@ -383,6 +383,7 @@ Scope.prototype.$destroy = function() {
   var siblings = this.$parent.$$children;
   var indexOfThis = siblings.indexOf(this);
   if (indexOfThis >= 0) {
+    this.$broadcast('$destroy');
     siblings.splice(indexOfThis, 1);
   }
 };
@@ -406,9 +407,16 @@ Scope.prototype.$on = function(eventName, listener) {
 };
 
 Scope.prototype.$emit = function(eventName) {
+  var propagationStopped = false;
   var e = {
     name: eventName,
-    targetScope: this
+    targetScope: this,
+    stopPropagation: function() {
+      propagationStopped = true;
+    },
+    preventDefault: function() {
+      e.defaultPrevented = true;
+    }
   };
   var listenerArgs = [e].concat(_.rest(arguments));
 
@@ -417,7 +425,7 @@ Scope.prototype.$emit = function(eventName) {
     e.currentScope = scope;
     scope.$$fireEventOnScope(eventName, listenerArgs);
     scope = scope.$parent;
-  } while (scope);
+  } while (scope && !propagationStopped);
   e.currentScope = null;
 
   return e;
@@ -426,7 +434,10 @@ Scope.prototype.$emit = function(eventName) {
 Scope.prototype.$broadcast = function(eventName) {
   var e = {
     name: eventName,
-    targetScope: this
+    targetScope: this,
+    preventDefault: function() {
+      e.defaultPrevented = true;
+    }
   };
   var listenerArgs = [e].concat(_.rest(arguments));
 
@@ -445,12 +456,17 @@ Scope.prototype.$$fireEventOnScope = function(eventName, listenerArgs) {
 
   var i = 0;
   while (i < listeners.length) {
-    if (listeners[i] === null) {
-      listeners.splice(i, 1);
-    } else {
-      listeners[i].apply(null, listenerArgs);
-      // only increment when we have not spliced, so we don't skip
+    if (listeners[i] !== null) {
+      try {
+        listeners[i].apply(null, listenerArgs);
+      } catch (e) {
+        console.error(e);
+      }
+      // only increment when we have not spliced,
+      // so we don't skip the next listener (changing indices!)
       i++;
+    } else {
+      listeners.splice(i, 1);
     }
   }
 };
