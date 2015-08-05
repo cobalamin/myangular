@@ -188,6 +188,8 @@ AST.prototype.primary = function() {
     return this.objectDeclaration();
   } else if (this.constants.hasOwnProperty(this.tokens[0].text)) {
     return this.constants[this.consume().text];
+  } else if (this.peek().identifier) {
+    return this.identifier();
   } else {
     return this.constant();
   }
@@ -270,10 +272,15 @@ function ASTCompiler(astBuilder) {
 
 ASTCompiler.prototype.compile = function(text) {
   var ast = this.astBuilder.ast(text);
-  this.state = {body: []};
+  this.state = {body: [], nextId: 0, vars: []};
   this.recurse(ast);
   /* jshint -W054 */
-  return new Function(this.state.body.join(''));
+  var fnBody = this.state.body.join('');
+  if (this.state.vars.length) {
+    fnBody = 'var ' + this.state.vars.join(',') + ';' +
+      fnBody;
+  }
+  return new Function('s', fnBody);
   /* jshint +W054 */
 };
 
@@ -298,6 +305,10 @@ ASTCompiler.prototype.recurse = function(ast) {
         return key + ':' + value;
       }, this);
       return '{' + properties.join(',') + '}';
+    case AST.Identifier:
+      var intoId = this.nextId();
+      this.if_('s', this.assign(intoId, this.nonComputedMember('s', ast.name)));
+      return intoId;
   }
 };
 
@@ -316,6 +327,22 @@ ASTCompiler.prototype.stringEscapeRegex = /[^ a-zA-Z0-9]/g;
 ASTCompiler.prototype.stringEscapeFn = function(c) {
   // use '0000' and slice(-4) for zero-padding
   return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4);
+};
+
+ASTCompiler.prototype.nonComputedMember = function(left, right) {
+  return '(' + left + ').' + right;
+};
+
+ASTCompiler.prototype.if_ = function(test, consequent) {
+  this.state.body.push('if(', test, '){', consequent, '}');
+};
+ASTCompiler.prototype.assign = function(id, value) {
+  return id + '=' + value + ';';
+};
+ASTCompiler.prototype.nextId = function() {
+  var id = '__v' + (this.state.nextId++);
+  this.state.vars.push(id);
+  return id;
 };
 
 // Parser ======================================================================
