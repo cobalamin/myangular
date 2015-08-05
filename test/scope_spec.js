@@ -1727,6 +1727,122 @@ describe("Scope", function() {
         var parentEvent = parentListener.calls.mostRecent().args[0];
         expect(scopeEvent).toBe(parentEvent);
       });
+
+      it("attaches targetScope", function() {
+        var scopeListener = jasmine.createSpy();
+        var parentListener = jasmine.createSpy();
+
+        scope.$on('someEvent', scopeListener);
+        parent.$on('someEvent', parentListener);
+
+        scope.$emit('someEvent');
+        expect(scopeListener.calls.mostRecent().args[0].targetScope).toBe(scope);
+        expect(parentListener.calls.mostRecent().args[0].targetScope).toBe(scope);
+      });
+
+      it("attaches currentScope", function() {
+        var currentScopeOnScope, currentScopeOnParent;
+        var scopeListener = function(e) {
+          currentScopeOnScope = e.currentScope;
+        };
+        var parentListener = function(e) {
+          currentScopeOnParent = e.currentScope;
+        };
+
+        scope.$on('someEvent', scopeListener);
+        parent.$on('someEvent', parentListener);
+
+        scope.$emit('someEvent');
+
+        expect(currentScopeOnScope).toBe(scope);
+        expect(currentScopeOnParent).toBe(parent);
+      });
+
+      it("sets currentScope to null after propagation", function() {
+        var event;
+        var scopeListener = function(e) {
+          event = e;
+        };
+        scope.$on('someEvent', scopeListener);
+
+        scope.$emit('someEvent');
+
+        expect(event.currentScope).toBe(null);
+      });
+    });
+
+    describe("$broadcast", function() {
+      it("propagates down the scope hierarchy", function() {
+        var scopeListener = jasmine.createSpy();
+        var childListener = jasmine.createSpy();
+        var isolatedChildListener = jasmine.createSpy();
+
+        scope.$on('someEvent', scopeListener);
+        child.$on('someEvent', childListener);
+        isolatedChild.$on('someEvent', isolatedChildListener);
+
+        scope.$broadcast('someEvent');
+
+        expect(scopeListener).toHaveBeenCalled();
+        expect(childListener).toHaveBeenCalled();
+        expect(isolatedChildListener).toHaveBeenCalled();
+      });
+
+      it("propagates the same event down", function() {
+        var scopeListener = jasmine.createSpy();
+        var childListener = jasmine.createSpy();
+
+        scope.$on('someEvent', scopeListener);
+        scope.$on('someEvent', childListener);
+
+        scope.$broadcast('someEvent');
+
+        var scopeEvent = scopeListener.calls.mostRecent().args[0];
+        var childEvent = childListener.calls.mostRecent().args[0];
+        expect(scopeEvent).toBe(childEvent);
+      });
+
+      it("attaches targetScope", function() {
+        var scopeListener = jasmine.createSpy();
+        var childListener = jasmine.createSpy();
+
+        scope.$on('someEvent', scopeListener);
+        child.$on('someEvent', childListener);
+
+        scope.$broadcast('someEvent');
+        expect(scopeListener.calls.mostRecent().args[0].targetScope).toBe(scope);
+        expect(childListener.calls.mostRecent().args[0].targetScope).toBe(scope);
+      });
+
+      it("attaches currentScope", function() {
+        var currentScopeOnScope, currentScopeOnChild;
+        var scopeListener = function(e) {
+          currentScopeOnScope = e.currentScope;
+        };
+        var childListener = function(e) {
+          currentScopeOnChild = e.currentScope;
+        };
+
+        scope.$on('someEvent', scopeListener);
+        child.$on('someEvent', childListener);
+
+        scope.$broadcast('someEvent');
+
+        expect(currentScopeOnScope).toBe(scope);
+        expect(currentScopeOnChild).toBe(child);
+      });
+
+      it("sets currentScope to null after propagation", function() {
+        var event;
+        var scopeListener = function(e) {
+          event = e;
+        };
+        scope.$on('someEvent', scopeListener);
+
+        scope.$broadcast('someEvent');
+
+        expect(event.currentScope).toBe(null);
+      });
     });
 
   });
