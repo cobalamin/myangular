@@ -16,10 +16,13 @@ function Scope() {
   this.$root = this;
   this.$$children = [];
 
+  this.$$listeners = {};
+
   this.$$phase = null;
 }
 
-// === Watch ===
+// Watch =======================================================================
+
 Scope.prototype.$watch = function(watchFn, listenerFn, valueEq) {
   var watcher = {
     watchFn: watchFn,
@@ -85,7 +88,8 @@ Scope.prototype.$watchGroup = function(watchFns, listenerFn) {
   };
 };
 
-// === Watch Collection ===
+// Watch Collection ============================================================
+
 Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
   var newVal, oldVal;
   var changeCount = 0;
@@ -177,7 +181,8 @@ Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
   return this.$watch(internalWatchFn, internalListenerFn);
 };
 
-// === Digest ===
+// Digest ======================================================================
+
 Scope.prototype.$digest = function() {
   var ttl = 10;
   var dirty;
@@ -268,7 +273,8 @@ Scope.prototype.$$everyScope = function(fn) {
   });
 };
 
-// === Apply ===
+// Apply =======================================================================
+
 Scope.prototype.$apply = function(expr) {
   try {
     this.$beginPhase('$apply');
@@ -302,7 +308,8 @@ Scope.prototype.$$flushApplyAsync = function() {
   this.$root.$$applyAsyncId = null;
 };
 
-// === Eval ===
+// Eval ========================================================================
+
 Scope.prototype.$eval = function(expr, locals) {
   return expr(this, locals);
 };
@@ -318,7 +325,8 @@ Scope.prototype.$evalAsync = function(expr) {
   this.$$asyncQueue.push({ scope: this, expression: expr });
 };
 
-// === Equality ===
+// Equality ====================================================================
+
 Scope.prototype.$$areEqual = function(newVal, oldVal, valueEq) {
   if (valueEq) {
     return _.isEqual(newVal, oldVal);
@@ -330,7 +338,8 @@ Scope.prototype.$$areEqual = function(newVal, oldVal, valueEq) {
   }
 };
 
-// === Phases ===
+// Phases ======================================================================
+
 Scope.prototype.$beginPhase = function(phase) {
   if (this.$$phase) {
     throw new Error(this.$$phase + ' already in progress.');
@@ -342,7 +351,8 @@ Scope.prototype.$clearPhase = function() {
   this.$$phase = null;
 };
 
-// === Child Scopes ===
+// Child Scopes ================================================================
+
 Scope.prototype.$new = function(isolated, parent) {
   var child;
   parent = parent || this;
@@ -359,6 +369,7 @@ Scope.prototype.$new = function(isolated, parent) {
     // Shadowing these properties
     child.$$watchers = [];
     child.$$children = [];
+    child.$$listeners = {};
   }
 
   parent.$$children.push(child);
@@ -373,5 +384,59 @@ Scope.prototype.$destroy = function() {
   var indexOfThis = siblings.indexOf(this);
   if (indexOfThis >= 0) {
     siblings.splice(indexOfThis, 1);
+  }
+};
+
+// Events ======================================================================
+
+Scope.prototype.$on = function(eventName, listener) {
+  var listeners = this.$$listeners[eventName];
+  if (!listeners) {
+    listeners = [];
+    this.$$listeners[eventName] = listeners;
+  }
+
+  listeners.push(listener);
+  return function() {
+    var index = listeners.indexOf(listener);
+    if (index >= 0) {
+      listeners[index] = null;
+    }
+  };
+};
+
+Scope.prototype.$emit = function(eventName) {
+  var e = { name: eventName },
+    listenerArgs = [e].concat(_.rest(arguments));
+
+  var scope = this;
+  do {
+    scope.$$fireEventOnScope(eventName, listenerArgs);
+    scope = scope.$parent;
+  } while (scope);
+
+  return e;
+};
+
+Scope.prototype.$broadcast = function(eventName) {
+  var e = { name: eventName },
+    listenerArgs = [e].concat(_.rest(arguments));
+
+  this.$$fireEventOnScope(eventName, listenerArgs);
+  return e;
+};
+
+Scope.prototype.$$fireEventOnScope = function(eventName, listenerArgs) {
+  var listeners = this.$$listeners[eventName] || [];
+
+  var i = 0;
+  while (i < listeners.length) {
+    if (listeners[i] === null) {
+      listeners.splice(i, 1);
+    } else {
+      listeners[i].apply(null, listenerArgs);
+      // only increment when we have not spliced, so we don't skip
+      i++;
+    }
   }
 };
