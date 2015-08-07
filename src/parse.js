@@ -399,7 +399,9 @@ ASTCompiler.prototype.recurse = function(ast, ctx) {
     case AST.CallExpression:
       var callContext = {};
       var callee = this.recurse(ast.callee, callContext);
-      var args = _.map(ast.args, _.bind(this.recurse, this));
+      var args = _.map(ast.args, function(a) {
+        return this.recurse(a);
+      }, this);
 
       if (callContext.name) {
         if (callContext.computed) {
