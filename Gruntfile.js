@@ -24,6 +24,7 @@ module.exports = function (grunt) {
     testem: {
       unit: {
         options: {
+          growl: true,
           framework: 'jasmine2',
           launch_in_dev: ['PhantomJS'],
           before_tests: 'grunt jshint',
