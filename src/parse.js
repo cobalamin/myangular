@@ -23,7 +23,7 @@ Lexer.prototype.lex = function(text) {
       this.readNumber();
     } else if (this.isOneOf('\'\"')) {
       this.readString(this.ch);
-    } else if (this.isOneOf('[],{}:.')) {
+    } else if (this.isOneOf('[],{}:.()')) {
       this.tokens.push({
         text: this.ch
       });
@@ -167,6 +167,7 @@ AST.Property = 'Property';
 AST.Identifier = 'Identifier';
 AST.ThisExpression = 'ThisExpression';
 AST.MemberExpression = 'MemberExpression';
+AST.CallExpression = 'CallExpression';
 
 AST.prototype.constants = {
   'null': {type: AST.Literal, value: null},
@@ -199,7 +200,7 @@ AST.prototype.primary = function() {
   }
   var next;
 
-  while ((next = this.expect('.', '['))) {
+  while ((next = this.expect('.', '[', '('))) {
     if (next.text === '[') {
       primary = {
         type: AST.MemberExpression,
@@ -208,13 +209,20 @@ AST.prototype.primary = function() {
         computed: true
       };
       this.consume(']');
-    } else {
+    } else if (next.text === '.') {
       primary = {
         type: AST.MemberExpression,
         object: primary,
         property: this.identifier(),
         computed: false
       };
+    } else if (next.text === '(') {
+      primary = {
+        type: AST.CallExpression,
+        callee: primary,
+        args: this.parseArguments()
+      };
+      this.consume(')');
     }
   }
   return primary;
@@ -265,6 +273,16 @@ AST.prototype.objectDeclaration = function() {
   return {type: AST.ObjectExpression, properties: properties};
 };
 
+AST.prototype.parseArguments = function() {
+  var args = [];
+  if (!this.peek(')')) {
+    do {
+      args.push(this.primary());
+    } while (this.expect(','));
+  }
+  return args;
+};
+
 AST.prototype.expect = function() {
   var token = this.peek.apply(this, arguments);
   if (token) {
@@ -311,19 +329,22 @@ ASTCompiler.prototype.compile = function(text) {
   /* jshint +W054 */
 };
 
-ASTCompiler.prototype.recurse = function(ast) {
+ASTCompiler.prototype.recurse = function(ast, ctx) {
   var intoId;
   switch (ast.type) {
     case AST.Program:
       this.state.body.push('return ', this.recurse(ast.body), ';');
       break;
+    
     case AST.Literal:
       return this.escape(ast.value);
+    
     case AST.ArrayExpression:
       var elements = _.map(ast.elements, function(element) {
         return this.recurse(element);
       }, this);
       return '[' + elements.join(',') + ']';
+    
     case AST.ObjectExpression:
       var properties = _.map(ast.properties, function(property) {
         var key = property.key.type === AST.Identifier ?
@@ -333,6 +354,7 @@ ASTCompiler.prototype.recurse = function(ast) {
         return key + ':' + value;
       }, this);
       return '{' + properties.join(',') + '}';
+    
     case AST.Identifier:
       intoId = this.nextId();
       var localsHasProperty = this.getHasProperty('l', ast.name);
@@ -340,21 +362,54 @@ ASTCompiler.prototype.recurse = function(ast) {
                this.assign(intoId, this.nonComputedMember('l', ast.name)));
       this.if_(this.not(localsHasProperty) + ' && s',
                this.assign(intoId, this.nonComputedMember('s', ast.name)));
+      if (ctx) {
+        ctx.context = localsHasProperty + ' ?l:s';
+        ctx.name = ast.name;
+        ctx.computed = false;
+      }
       return intoId;
+    
     case AST.ThisExpression:
       return 's';
+    
     case AST.MemberExpression:
       intoId = this.nextId();
       var left = this.recurse(ast.object);
+      if (ctx) {
+        ctx.context = left;
+      }
       if (ast.computed) {
         var right = this.recurse(ast.property);
         this.if_(left,
                  this.assign(intoId, this.computedMember(left, right)));
+        if (ctx) {
+          ctx.name = right;
+          ctx.computed = true;
+        }
       } else {
         this.if_(left,
                  this.assign(intoId, this.nonComputedMember(left, ast.property.name)));
+        if (ctx) {
+          ctx.name = ast.property.name;
+          ctx.computed = false;
+        }
       }
       return intoId;
+    
+    case AST.CallExpression:
+      var callContext = {};
+      var callee = this.recurse(ast.callee, callContext);
+      var args = _.map(ast.args, _.bind(this.recurse, this));
+
+      if (callContext.name) {
+        if (callContext.computed) {
+          callee = this.computedMember(callContext.context, callContext.name);
+        } else {
+          callee = this.nonComputedMember(callContext.context, callContext.name);
+        }
+      }
+    
+      return callee + ' && ' + callee + '(' + args.join(',') + ')';
   }
 };
 
@@ -416,5 +471,7 @@ function parse(expr) {
   var lexer = new Lexer();
   var parser = new Parser(lexer);
 
-  return parser.parse(expr);
+  var fn = parser.parse(expr);
+  // console.log(fn.toString());
+  return fn;
 }
