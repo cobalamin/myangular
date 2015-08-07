@@ -197,13 +197,25 @@ AST.prototype.primary = function() {
   } else {
     primary = this.constant();
   }
+  var next;
 
-  if (this.expect('.')) {
-    primary = {
-      type: AST.MemberExpression,
-      object: primary,
-      property: this.identifier()
-    };
+  while ((next = this.expect('.', '['))) {
+    if (next.text === '[') {
+      primary = {
+        type: AST.MemberExpression,
+        object: primary,
+        property: this.primary(),
+        computed: true
+      };
+      this.consume(']');
+    } else {
+      primary = {
+        type: AST.MemberExpression,
+        object: primary,
+        property: this.identifier(),
+        computed: false
+      };
+    }
   }
   return primary;
 };
@@ -253,8 +265,8 @@ AST.prototype.objectDeclaration = function() {
   return {type: AST.ObjectExpression, properties: properties};
 };
 
-AST.prototype.expect = function(e) {
-  var token = this.peek(e);
+AST.prototype.expect = function() {
+  var token = this.peek.apply(this, arguments);
   if (token) {
     return this.tokens.shift();
   }
@@ -268,10 +280,12 @@ AST.prototype.consume = function(e) {
   return token;
 };
 
-AST.prototype.peek = function(e) {
+AST.prototype.peek = function() {
   if (this.tokens.length > 0) {
     var text = this.tokens[0].text;
-    if (text === e || !e) {
+    var anyMatches = _.some(arguments, function(e) { return text === e; });
+    var allNone = _.every(arguments, function(e) { return !e; });
+    if (anyMatches || allNone) {
       return this.tokens[0];
     }
   }
@@ -293,7 +307,7 @@ ASTCompiler.prototype.compile = function(text) {
     fnBody = 'var ' + this.state.vars.join(',') + ';' +
       fnBody;
   }
-  return new Function('s', fnBody);
+  return new Function('s', 'l', fnBody);
   /* jshint +W054 */
 };
 
@@ -321,15 +335,25 @@ ASTCompiler.prototype.recurse = function(ast) {
       return '{' + properties.join(',') + '}';
     case AST.Identifier:
       intoId = this.nextId();
-      this.if_('s', this.assign(intoId, this.nonComputedMember('s', ast.name)));
+      var localsHasProperty = this.getHasProperty('l', ast.name);
+      this.if_(localsHasProperty,
+               this.assign(intoId, this.nonComputedMember('l', ast.name)));
+      this.if_(this.not(localsHasProperty) + ' && s',
+               this.assign(intoId, this.nonComputedMember('s', ast.name)));
       return intoId;
     case AST.ThisExpression:
       return 's';
     case AST.MemberExpression:
       intoId = this.nextId();
       var left = this.recurse(ast.object);
-      this.if_(left,
-               this.assign(intoId, this.nonComputedMember(left, ast.property.name)));
+      if (ast.computed) {
+        var right = this.recurse(ast.property);
+        this.if_(left,
+                 this.assign(intoId, this.computedMember(left, right)));
+      } else {
+        this.if_(left,
+                 this.assign(intoId, this.nonComputedMember(left, ast.property.name)));
+      }
       return intoId;
   }
 };
@@ -354,6 +378,9 @@ ASTCompiler.prototype.stringEscapeFn = function(c) {
 ASTCompiler.prototype.nonComputedMember = function(left, right) {
   return '(' + left + ').' + right;
 };
+ASTCompiler.prototype.computedMember = function(left, right) {
+  return '(' + left + ')[' + right + ']';
+};
 
 ASTCompiler.prototype.if_ = function(test, consequent) {
   this.state.body.push('if(', test, '){', consequent, '}');
@@ -365,6 +392,12 @@ ASTCompiler.prototype.nextId = function() {
   var id = '__v' + (this.state.nextId++);
   this.state.vars.push(id);
   return id;
+};
+ASTCompiler.prototype.not = function(e) {
+  return '!(' + e + ')';  
+};
+ASTCompiler.prototype.getHasProperty = function(o, prop) {
+  return o + ' && (' + this.escape(prop) + ' in ' + o + ')';
 };
 
 // Parser ======================================================================
@@ -383,9 +416,5 @@ function parse(expr) {
   var lexer = new Lexer();
   var parser = new Parser(lexer);
 
-  var fn = parser.parse(expr);
-  if (!(/PhantomJS/.test(window.navigator.userAgent))) {
-    console.log(fn.toString());
-  }
-  return fn;
+  return parser.parse(expr);
 }
