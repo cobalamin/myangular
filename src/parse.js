@@ -18,9 +18,22 @@ function ensureSafeObject(obj) {
     } else if (obj.children && (obj.nodeName || (obj.prop && obj.attr && obj.find))) {
       throw new Error("Referencing DOM nodes in Angular expressions is disallowed!");
     } else if (obj.constructor === obj) {
-      throw new Error('Referencing Function in Angular expressions is disallowed!');
+      throw new Error("Referencing Function in Angular expressions is disallowed!");
     } else if (obj.getOwnPropertyNames || obj.getOwnPropertyDescriptor) {
-      throw new Error('Referencing Object in Angular expressions is disallowed!');
+      throw new Error("Referencing Object in Angular expressions is disallowed!");
+    }
+  }
+  return obj;
+}
+
+function ensureSafeFunction(obj) {
+  if (obj) {
+    if (obj.constructor === obj) {
+      throw new Error("Referencing Function in Angular expressions is disallowed!");
+    } else if (obj === Function.prototype.call ||
+      obj === Function.prototype.apply ||
+      obj === Function.prototype.bind) {
+      throw new Error("Referencing call, apply, or bind in Angular expressions is disallowed!");
     }
   }
   return obj;
@@ -365,10 +378,12 @@ ASTCompiler.prototype.compile = function(text) {
   return new Function(
     'ensureSafeMemberName',
     'ensureSafeObject',
+    'ensureSafeFunction',
     fnString
     )(
       ensureSafeMemberName,
-      ensureSafeObject
+      ensureSafeObject,
+      ensureSafeFunction
     );
   /* jshint +W054 */
 };
@@ -480,7 +495,7 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
           callee = this.nonComputedMember(callContext.context, callContext.name);
         }
       }
-
+      this.addEnsureSafeFunction(callee);
       return callee + ' && ensureSafeObject(' + callee + '(' + args.join(',') + '))';
 
     case AST.AssignmentExpression:
@@ -548,6 +563,9 @@ ASTCompiler.prototype.addEnsureSafeMemberName = function(expr) {
 };
 ASTCompiler.prototype.addEnsureSafeObject = function(expr) {
   this.state.body.push('ensureSafeObject(' + expr + ');');
+};
+ASTCompiler.prototype.addEnsureSafeFunction = function(expr) {
+  this.state.body.push('ensureSafeFunction(' + expr + ');');
 };
 
 // Parser ======================================================================
