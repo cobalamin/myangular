@@ -50,7 +50,19 @@ var ESCAPES = {'n': '\n', 'f': '\f', 'r': '\r', 't': '\t',
 var OPERATORS = {
   '+': true,
   '!': true,
-  '-': true
+  '-': true,
+  '*': true,
+  '/': true,
+  '%': true,
+  '=': true,
+  '==': true,
+  '!=': true,
+  '===': true,
+  '!==': true,
+  '<': true,
+  '>': true,
+  '<=': true,
+  '>=': true
 };
 
 function Lexer() {
@@ -70,7 +82,7 @@ Lexer.prototype.lex = function(text) {
       this.readNumber();
     } else if (this.isOneOf('\'"')) {
       this.readString(this.ch);
-    } else if (this.isOneOf('[],{}:.()=')) {
+    } else if (this.isOneOf('[],{}:.()')) {
       this.tokens.push({
         text: this.ch
       });
@@ -80,10 +92,17 @@ Lexer.prototype.lex = function(text) {
     } else if (this.isWhitespace(this.ch)) {
       this.index++;
     } else {
-      var op = OPERATORS[this.ch];
-      if (op) {
-        this.tokens.push({ text: this.ch });
-        this.index++;
+      var ch = this.ch;
+      var ch2 = this.ch + this.peek();
+      var ch3 = this.ch + this.peek() + this.peek(2);
+      var op = OPERATORS[ch];
+      var op2 = OPERATORS[ch2];
+      var op3 = OPERATORS[ch3];
+
+      if (op || op2 || op3) {
+        var token = op3 ? ch3 : (op2 ? ch2 : ch);
+        this.tokens.push({ text: token });
+        this.index += token.length;
       } else {
         throw new Error("Unexpected next character: " + this.ch);
       }
@@ -203,9 +222,10 @@ Lexer.prototype.readIdent = function() {
   this.tokens.push(token);
 };
 
-Lexer.prototype.peek = function() {
-  return this.index < this.text.length - 1 ?
-    this.text.charAt(this.index + 1) :
+Lexer.prototype.peek = function(n) {
+  n = n || 1;
+  return this.index + n < this.text.length ?
+    this.text.charAt(this.index + n) :
     false;
 };
 
@@ -225,6 +245,7 @@ AST.MemberExpression = 'MemberExpression';
 AST.CallExpression = 'CallExpression';
 AST.AssignmentExpression = 'AssignmentExpression';
 AST.UnaryExpression = 'UnaryExpression';
+AST.BinaryExpression = 'BinaryExpression';
 
 AST.prototype.constants = {
   'null': {type: AST.Literal, value: null},
@@ -287,7 +308,7 @@ AST.prototype.primary = function() {
 
 AST.prototype.unary = function() {
   var token;
-  if ((token = this.expect.apply(this, _.keys(OPERATORS)))) {
+  if ((token = this.expect('+', '!', '-'))) {
     return {
       type: AST.UnaryExpression,
       operator: token.text,
@@ -298,10 +319,66 @@ AST.prototype.unary = function() {
   }
 };
 
-AST.prototype.assignment = function() {
+AST.prototype.multiplicative = function() {
   var left = this.unary();
+  var token;
+  while ((token = this.expect('*', '/', '%'))) {
+    left = {
+      type: AST.BinaryExpression,
+      left: left,
+      operator: token.text,
+      right: this.unary()
+    };
+  }
+  return left;
+};
+
+AST.prototype.additive = function() {
+  var left = this.multiplicative();
+  var token;
+  while ((token = this.expect('+')) || (token = this.expect('-'))) {
+    left = {
+      type: AST.BinaryExpression,
+      left: left,
+      operator: token.text,
+      right: this.multiplicative()
+    };
+  }
+  return left;
+};
+
+AST.prototype.equality = function() {
+  var left = this.relational();
+  var token;
+  while ((token = this.expect('==', '!=', '===', '!=='))) {
+    left = {
+      type: AST.BinaryExpression,
+      left: left,
+      operator: token.text,
+      right: this.relational()
+    };
+  }
+  return left;
+};
+
+AST.prototype.relational = function() {
+  var left = this.additive();
+  var token;
+  while ((token = this.expect('<', '>', '<=', '>='))) {
+    left = {
+      type: AST.BinaryExpression,
+      left: left,
+      operator: token.text,
+      right: this.additive()
+    };
+  }
+  return left;
+};
+
+AST.prototype.assignment = function() {
+  var left = this.equality();
   if (this.expect('=')) {
-    var right = this.unary();
+    var right = this.equality();
     return {type: AST.AssignmentExpression, left: left, right: right};
   }
   return left;
@@ -548,6 +625,17 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
     case AST.UnaryExpression:
       return ast.operator +
         '(' + this.ifDefined(this.recurse(ast.argument), 0) + ')';
+
+    case AST.BinaryExpression:
+      if (ast.operator === '+' || ast.operator === '-') {
+        return '(' + this.ifDefined(this.recurse(ast.left), 0) + ')' +
+          ast.operator +
+          '(' + this.ifDefined(this.recurse(ast.right), 0) + ')';
+      } else {
+        return '(' + this.recurse(ast.left) + ')' +
+          ast.operator +
+          '(' + this.recurse(ast.right) + ')';
+      }
   }
 };
 
