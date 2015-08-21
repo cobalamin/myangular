@@ -84,7 +84,7 @@ Lexer.prototype.lex = function(text) {
       this.readNumber();
     } else if (this.isOneOf('\'"')) {
       this.readString(this.ch);
-    } else if (this.isOneOf('[],{}:.()?')) {
+    } else if (this.isOneOf('[],{}:.()?;')) {
       this.tokens.push({
         text: this.ch
       });
@@ -264,7 +264,15 @@ AST.prototype.ast = function(text) {
 };
 
 AST.prototype.program = function() {
-  return {type: AST.Program, body: this.assignment()};
+  var body = [];
+  while (true) {
+    if (this.tokens.length) {
+      body.push(this.assignment());
+    }
+    if (!this.expect(';')) {
+      return {type: AST.Program, body: body};
+    }
+  }
 };
 
 AST.prototype.primary = function() {
@@ -554,7 +562,10 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
   var intoId;
   switch (ast.type) {
     case AST.Program:
-      this.state.body.push('return ', this.recurse(ast.body), ';');
+      _.forEach(_.initial(ast.body), function(stmt) {
+        this.state.body.push(this.recurse(stmt), ';');
+      }, this);
+      this.state.body.push('return ', this.recurse(_.last(ast.body)), ';');
       break;
 
     case AST.Literal:
@@ -706,9 +717,6 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
       this.if_(this.not(testId),
         this.assign(intoId, this.recurse(ast.alternate)));
       return intoId;
-
-    default:
-      throw new Error("Unknown AST node type!");
   }
 };
 
