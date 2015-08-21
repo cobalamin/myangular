@@ -6,7 +6,8 @@ function filterFilter() {
     } else if (_.isString(filterExpr) ||
                _.isNumber(filterExpr) ||
                _.isBoolean(filterExpr) ||
-               _.isNull(filterExpr)) {
+               _.isNull(filterExpr) ||
+               _.isObject(filterExpr)) {
       predicateFn = createPredicateFn(filterExpr);
     } else {
       return arr;
@@ -19,10 +20,26 @@ function filterFilter() {
 function deepCompare(actual, expected, comparator) {
   if (_.isString(expected) && _.startsWith(expected, '!')) {
     return !deepCompare(actual, expected.substring(1), comparator);
-  } else if (_.isObject(actual)) {
-    return _.some(actual, function(value) {
-      return deepCompare(value, expected, comparator);
+  } else if (_.isArray(actual)) {
+    return _.any(actual, function(actualItem) {
+      return deepCompare(actualItem, expected, comparator);
     });
+  } else if (_.isObject(actual)) {
+    if (_.isObject(expected)) {
+      return _.every(
+        _.toPlainObject(expected),
+        function(expectedVal, expectedKey) {
+          if (_.isUndefined(expectedVal)) {
+            return true;
+          }
+          return deepCompare(actual[expectedKey], expectedVal, comparator);
+        }
+      );
+    } else {
+      return _.some(actual, function(value) {
+        return deepCompare(value, expected, comparator);
+      });
+    }
   } else {
     return comparator(actual, expected);
   }
