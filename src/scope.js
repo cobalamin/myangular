@@ -1,4 +1,5 @@
 /* jshint globalstrict: true */
+/* global parse: false */
 'use strict';
 
 var initWatchVal = {};
@@ -25,7 +26,7 @@ function Scope() {
 
 Scope.prototype.$watch = function(watchFn, listenerFn, valueEq) {
   var watcher = {
-    watchFn: watchFn,
+    watchFn: parse(watchFn),
     listenerFn: listenerFn || function(){},
     valueEq: !!valueEq,
     last: initWatchVal
@@ -96,6 +97,8 @@ Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
   var oldLength;
   var veryOldVal, trackVeryOldVal = (listenerFn.length > 1);
   var firstRun = true;
+
+  watchFn = parse(watchFn);
 
   var internalWatchFn = _.bind(function(scope) {
     var newLength;
@@ -311,7 +314,7 @@ Scope.prototype.$$flushApplyAsync = function() {
 // Eval ========================================================================
 
 Scope.prototype.$eval = function(expr, locals) {
-  return expr(this, locals);
+  return parse(expr)(this, locals);
 };
 
 Scope.prototype.$evalAsync = function(expr) {

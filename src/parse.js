@@ -44,6 +44,103 @@ function ifDefined(value, defaultValue) {
   return typeof value === 'undefined' ? defaultValue : value;
 }
 
+// Literal/Constant Expressions ================================================
+
+function isLiteral(ast) {
+  return ast.body.length === 0 ||
+    ast.body.length === 1 &&
+      (ast.body[0].type === AST.Literal ||
+      ast.body[0].type === AST.ArrayExpression ||
+      ast.body[0].type === AST.ObjectExpression);
+}
+
+function markConstantExpressions(ast) {
+  var allConstants;
+  switch (ast.type) {
+    case AST.Program:
+      allConstants = true;
+      _.each(ast.body, function(expr) {
+        markConstantExpressions(expr);
+        allConstants = allConstants && expr.constant;
+      });
+      ast.constant = allConstants;
+      break;
+    // ====================
+    case AST.Literal:
+      ast.constant = true;
+      break;
+    // ====================
+    case AST.Identifier:
+      ast.constant = false;
+      break;
+    // ====================
+    case AST.ArrayExpression:
+      allConstants = true;
+      _.each(ast.elements, function(element) {
+        markConstantExpressions(element);
+        allConstants = allConstants && element.constant;
+      });
+      ast.constant = allConstants;
+      break;
+    // ====================
+    case AST.ObjectExpression:
+      allConstants = true;
+      _.each(ast.properties, function(property) {
+        markConstantExpressions(property.value);
+        allConstants = allConstants && property.value.constant;
+      });
+      ast.constant = allConstants;
+      break;
+    // ====================
+    case AST.ThisExpression:
+      ast.constant = false;
+      break;
+    // ====================
+    case AST.MemberExpression:
+      markConstantExpressions(ast.object);
+      if (ast.computed) {
+        markConstantExpressions(ast.property);
+      }
+      ast.constant = ast.object.constant && (!ast.computed || ast.property.constant);
+      break;
+    // ====================
+    case AST.CallExpression:
+      if (ast.filter) {
+        allConstants = true;
+        _.each(ast.arguments, function(arg) {
+          markConstantExpressions(arg);
+          allConstants = allConstants && arg.constant;
+        });
+        ast.constant = allConstants;
+      } else {
+        ast.constant = false;
+      }
+      break;
+    // ====================
+    case AST.AssignmentExpression:
+    case AST.BinaryExpression:
+    case AST.LogicalExpression:
+      markConstantExpressions(ast.left);
+      markConstantExpressions(ast.right);
+      ast.constant = ast.left.constant && ast.right.constant;
+      break;
+    // ====================
+    case AST.UnaryExpression:
+      markConstantExpressions(ast.argument);
+      ast.constant = ast.argument.constant;
+      break;
+    // ====================
+    case AST.ConditionalExpression:
+      markConstantExpressions(ast.test);
+      markConstantExpressions(ast.consequent);
+      markConstantExpressions(ast.alternate);
+      ast.constant = ast.test.constant &&
+                     ast.consequent.constant &&
+                     ast.alternate.constant;
+      break;
+  }
+}
+
 // Lexer =======================================================================
 
 var ESCAPES = {'n': '\n', 'f': '\f', 'r': '\r', 't': '\t',
@@ -554,6 +651,8 @@ function ASTCompiler(astBuilder) {
 
 ASTCompiler.prototype.compile = function(text) {
   var ast = this.astBuilder.ast(text);
+  markConstantExpressions(ast);
+
   this.state = {
     body: [],
     nextId: 0,
@@ -570,7 +669,7 @@ ASTCompiler.prototype.compile = function(text) {
     ) + this.state.body.join('') +
     '}; return fn;';
 
-  return new Function(
+  var fn = new Function(
     'ensureSafeMemberName',
     'ensureSafeObject',
     'ensureSafeFunction',
@@ -585,6 +684,9 @@ ASTCompiler.prototype.compile = function(text) {
       filter
     );
   /* jshint +W054 */
+  fn.literal = isLiteral(ast);
+  fn.constant = ast.constant;
+  return fn;
 };
 
 ASTCompiler.prototype.recurse = function(ast, ctx, create) {
@@ -596,16 +698,16 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
       }, this);
       this.state.body.push('return ', this.recurse(_.last(ast.body)), ';');
       break;
-
+    // ====================
     case AST.Literal:
       return this.escape(ast.value);
-
+    // ====================
     case AST.ArrayExpression:
       var elements = _.map(ast.elements, function(element) {
         return this.recurse(element);
       }, this);
       return '[' + elements.join(',') + ']';
-
+    // ====================
     case AST.ObjectExpression:
       var properties = _.map(ast.properties, function(property) {
         var key = property.key.type === AST.Identifier ?
@@ -615,7 +717,7 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
         return key + ':' + value;
       }, this);
       return '{' + properties.join(',') + '}';
-
+    // ====================
     case AST.Identifier:
       ensureSafeMemberName(ast.name);
       intoId = this.nextId();
@@ -641,10 +743,10 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
       }
       this.addEnsureSafeObject(intoId);
       return intoId;
-
+    // ====================
     case AST.ThisExpression:
       return 's';
-
+    // ====================
     case AST.MemberExpression:
       intoId = this.nextId();
       var left = this.recurse(ast.object, undefined, create);
@@ -681,7 +783,7 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
         }
       }
       return intoId;
-
+    // ====================
     case AST.CallExpression:
       var callContext, callee, args;
 
@@ -710,7 +812,7 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
         return callee + ' && ensureSafeObject(' + callee + '(' + args.join(',') + '))';
       }
       break;
-
+    // ====================
     case AST.AssignmentExpression:
       var leftContext = {};
       this.recurse(ast.left, leftContext, true);
@@ -724,11 +826,11 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
 
       return this.assign(leftExpr,
         'ensureSafeObject(' + this.recurse(ast.right) + ')');
-
+      // ====================
     case AST.UnaryExpression:
       return ast.operator +
         '(' + this.ifDefined(this.recurse(ast.argument), 0) + ')';
-
+      // ====================
     case AST.BinaryExpression:
       if (ast.operator === '+' || ast.operator === '-') {
         return '(' + this.ifDefined(this.recurse(ast.left), 0) + ')' +
@@ -740,14 +842,14 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
           '(' + this.recurse(ast.right) + ')';
       }
       break;
-
+    // ====================
     case AST.LogicalExpression:
       intoId = this.nextId();
       this.state.body.push(this.assign(intoId, this.recurse(ast.left)));
       this.if_(ast.operator == '&&' ? intoId : this.not(intoId),
         this.assign(intoId, this.recurse(ast.right)));
       return intoId;
-
+    // ====================
     case AST.ConditionalExpression:
       intoId = this.nextId();
       var testId = this.nextId();
@@ -850,10 +952,14 @@ Parser.prototype.parse = function(text) {
 };
 
 function parse(expr) {
-  var lexer = new Lexer();
-  var parser = new Parser(lexer);
-
-  var fn = parser.parse(expr);
-  // console.log(fn.toString());
-  return fn;
+  switch (typeof expr) {
+    case 'string':
+      var lexer = new Lexer();
+      var parser = new Parser(lexer);
+      return parser.parse(expr);
+    case 'function':
+      return expr;
+    default:
+      return _.noop;
+  }
 }
