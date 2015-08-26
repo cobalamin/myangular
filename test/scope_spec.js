@@ -1,5 +1,5 @@
 /* jshint globalstrict: true */
-/* global Scope: false */
+/* global Scope: false, register: false */
 'use strict';
 
 describe("Scope", function() {
@@ -29,7 +29,7 @@ describe("Scope", function() {
 
     it("calls the watch fn with the scope as the argument", function() {
       var watchFn = jasmine.createSpy();
-      var listenerFn = function(){};
+      var listenerFn = _.noop;
 
       scope.$watch(watchFn, listenerFn);
       scope.$digest();
@@ -293,7 +293,7 @@ describe("Scope", function() {
           }
           return scope.aValue;
         },
-        function(){}
+        _.noop
       );
 
       scope.$digest();
@@ -313,7 +313,7 @@ describe("Scope", function() {
           }
           return scope.aValue;
         },
-        function(){}
+        _.noop
       );
 
       scope.$digest();
@@ -324,10 +324,10 @@ describe("Scope", function() {
       scope.aValue = [1,2,3];
       scope.$watch(
         function(scope) {
-          scope.$evalAsync(function(){});
+          scope.$evalAsync(_.noop);
           return scope.aValue;
         },
-        function(){}
+        _.noop
       );
 
       expect(function() { scope.$digest(); }).toThrow();
@@ -366,7 +366,7 @@ describe("Scope", function() {
         }
       );
 
-      scope.$evalAsync(function(){});
+      scope.$evalAsync(_.noop);
       expect(scope.counter).toBe(0);
       setTimeout(function() {
         expect(scope.counter).toBe(1);
@@ -451,7 +451,7 @@ describe("Scope", function() {
           scope.counter++;
           return scope.aValue;
         },
-        function(){}
+        _.noop
       );
 
       scope.$applyAsync(function(scope) {
@@ -516,7 +516,7 @@ describe("Scope", function() {
 
       scope.$watch(
         function(scope) { throw new Error("Error"); },
-        function(){}
+        _.noop
       );
       scope.$watch(
         function(scope) { return scope.aValue; },
@@ -664,7 +664,7 @@ describe("Scope", function() {
         }
       );
 
-      var destroyWatch = scope.$watch(function(){}, function(){});
+      var destroyWatch = scope.$watch(_.noop, _.noop);
 
       scope.$watch(
         function(scope) { return scope.aValue; },
@@ -731,6 +731,125 @@ describe("Scope", function() {
         expect(called).toBe(true);
         done();
       });
+    });
+
+    it("removes constant watches after first invocation", function() {
+      scope.$watch('[1,2,3]', _.noop);
+      scope.$digest();
+
+      expect(scope.$$watchers.length).toBe(0);
+    });
+
+    it("accepts one-time watches", function() {
+      var theValue;
+
+      scope.aValue = 42;
+      scope.$watch('::aValue', function(newVal, oldVal, scope) {
+        theValue = newVal;
+      });
+      scope.$digest();
+
+      expect(theValue).toBe(42);
+    });
+
+    it("removes one-time watches after first invocation", function() {
+      scope.aValue = 42;
+      scope.$watch('::aValue', _.noop);
+      scope.$digest();
+
+      expect(scope.$$watchers.length).toBe(0);
+    });
+
+    it("does not remove one-time watches until value is something other than undefined", function() {
+      scope.$watch('::aValue', _.noop);
+
+      scope.$digest();
+      expect(scope.$$watchers.length).toBe(1);
+
+      scope.aValue = 42;
+      scope.$digest();
+      expect(scope.$$watchers.length).toBe(0);
+    });
+
+    it("does not remove one-time watches until value has stabilised", function() {
+      scope.aValue = 42;
+
+      scope.$watch('::aValue', _.noop);
+      var unwatchDeleter = scope.$watch('aValue', function() {
+        delete scope.aValue;
+      });
+
+      scope.$digest();
+      expect(scope.$$watchers.length).toBe(2);
+
+      scope.aValue = 42;
+      unwatchDeleter();
+      scope.$digest();
+      expect(scope.$$watchers.length).toBe(0);
+    });
+
+    it("does not remove one-time watches before all array items are defined", function() {
+      scope.$watch('::[1,2,aValue]', _.noop, true);
+
+      scope.$digest();
+      expect(scope.$$watchers.length).toBe(1);
+
+      scope.aValue = 3;
+      scope.$digest();
+      expect(scope.$$watchers.length).toBe(0);
+    });
+
+    it("does not remove one-time watches before all object vals are defined", function() {
+      scope.$watch('::{a: 1, b: aValue}', _.noop, true);
+
+      scope.$digest();
+      expect(scope.$$watchers.length).toBe(1);
+
+      scope.aValue = 3;
+      scope.$digest();
+      expect(scope.$$watchers.length).toBe(0);
+    });
+
+    it("does not reevaluate an array if its contents do not change", function() {
+      var values = [];
+
+      scope.a = 1; scope.b = 2; scope.c = 3;
+      scope.$watch('[a,b,c]', function(value) {
+        values.push(value);
+      });
+
+      scope.$digest();
+      expect(values.length).toBe(1);
+      expect(values[0]).toEqual([1,2,3]);
+
+      scope.$digest();
+      expect(values.length).toBe(1);
+
+      scope.c = 4;
+      scope.$digest();
+      expect(values.length).toBe(2);
+      expect(values[1]).toEqual([1,2,4]);
+    });
+
+    it("allows $stateful filter value to change over time", function(done) {
+
+      register('withTime', function() {
+        return _.extend(function(v) {
+          return new Date().toISOString() + ": " + v;
+        }, { $stateful: true });
+      });
+
+      var listenerSpy = jasmine.createSpy();
+      scope.$watch('42 | withTime', listenerSpy);
+      scope.$digest();
+      var firstValue = listenerSpy.calls.mostRecent().args[0];
+
+      setTimeout(function() {
+        scope.$digest();
+        var secondValue = listenerSpy.calls.mostRecent().args[0];
+        expect(secondValue).not.toEqual(firstValue);
+        done();
+      }, 100);
     });
   });
 
@@ -1024,7 +1143,7 @@ describe("Scope", function() {
         }
       );
 
-      child2.$apply(function(){});
+      child2.$apply(_.noop);
 
       expect(parent.counter).toBe(1);
     });
@@ -1041,7 +1160,7 @@ describe("Scope", function() {
         }
       );
 
-      grandchild.$evalAsync(function(){});
+      grandchild.$evalAsync(_.noop);
 
       setTimeout(function() {
         expect(parent.counter).toBe(1);
@@ -1098,7 +1217,7 @@ describe("Scope", function() {
         }
       );
 
-      grandchild.$apply(function(){});
+      grandchild.$apply(_.noop);
 
       expect(parent.counter).toBe(1);
     });
@@ -1115,7 +1234,7 @@ describe("Scope", function() {
         }
       );
 
-      grandchild.$evalAsync(function(){});
+      grandchild.$evalAsync(_.noop);
 
       setTimeout(function() {
         expect(parent.counter).toBe(1);
@@ -1634,9 +1753,9 @@ describe("Scope", function() {
     });
 
     it("allows registering listeners", function() {
-      var l1 = function(){};
-      var l2 = function(){};
-      var l3 = function(){};
+      var l1 = _.noop;
+      var l2 = _.noop;
+      var l3 = _.noop;
 
       scope.$on('someEvent', l1);
       scope.$on('someEvent', l2);
@@ -1649,9 +1768,9 @@ describe("Scope", function() {
     });
 
     it("registers different listeners for every scope", function() {
-      var l1 = function(){};
-      var l2 = function(){};
-      var l3 = function(){};
+      var l1 = _.noop;
+      var l2 = _.noop;
+      var l3 = _.noop;
 
       scope.$on('someEvent', l1);
       child.$on('someEvent', l2);

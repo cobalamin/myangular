@@ -44,6 +44,26 @@ function ifDefined(value, defaultValue) {
   return typeof value === 'undefined' ? defaultValue : value;
 }
 
+function isAllDefined(val) {
+  return !_.any(val, _.isUndefined);
+}
+
+function expressionInputDirtyCheck(newVal, oldVal) {
+  return newVal === oldVal ||
+    (typeof newVal === 'number' && typeof oldVal === 'number' &&
+      isNaN(newVal) && isNaN(oldVal));
+}
+
+function getInputs(ast) {
+  if (ast.length !== 1) {
+    return;
+  }
+  var candidate = ast[0].toWatch;
+  if (candidate.length !== 1 || candidate[0] !== ast[0]) {
+    return candidate;
+  }
+}
+
 // Literal/Constant Expressions ================================================
 
 function isLiteral(ast) {
@@ -54,13 +74,16 @@ function isLiteral(ast) {
       ast.body[0].type === AST.ObjectExpression);
 }
 
-function markConstantExpressions(ast) {
+function markConstantAndWatchExpressions(ast) {
   var allConstants;
+  var argsToWatch;
+
   switch (ast.type) {
     case AST.Program:
       allConstants = true;
+
       _.each(ast.body, function(expr) {
-        markConstantExpressions(expr);
+        markConstantAndWatchExpressions(expr);
         allConstants = allConstants && expr.constant;
       });
       ast.constant = allConstants;
@@ -68,77 +91,194 @@ function markConstantExpressions(ast) {
     // ====================
     case AST.Literal:
       ast.constant = true;
+      ast.toWatch = [];
       break;
     // ====================
     case AST.Identifier:
       ast.constant = false;
+      ast.toWatch = [ast];
       break;
     // ====================
     case AST.ArrayExpression:
       allConstants = true;
+      argsToWatch = [];
+
       _.each(ast.elements, function(element) {
-        markConstantExpressions(element);
+        markConstantAndWatchExpressions(element);
         allConstants = allConstants && element.constant;
+        if (!element.constant) {
+          argsToWatch.push.apply(argsToWatch, element.toWatch);
+        }
       });
       ast.constant = allConstants;
+      ast.toWatch = argsToWatch;
       break;
     // ====================
     case AST.ObjectExpression:
       allConstants = true;
+      argsToWatch = [];
+
       _.each(ast.properties, function(property) {
-        markConstantExpressions(property.value);
+        markConstantAndWatchExpressions(property.value);
         allConstants = allConstants && property.value.constant;
+        if (!property.value.constant) {
+          argsToWatch.push.apply(argsToWatch, property.value.toWatch);
+        }
       });
       ast.constant = allConstants;
+      ast.toWatch = argsToWatch;
       break;
     // ====================
     case AST.ThisExpression:
       ast.constant = false;
+      ast.toWatch = [];
       break;
     // ====================
     case AST.MemberExpression:
-      markConstantExpressions(ast.object);
+      markConstantAndWatchExpressions(ast.object);
       if (ast.computed) {
-        markConstantExpressions(ast.property);
+        markConstantAndWatchExpressions(ast.property);
       }
       ast.constant = ast.object.constant && (!ast.computed || ast.property.constant);
+      ast.toWatch = [ast];
       break;
     // ====================
     case AST.CallExpression:
-      if (ast.filter) {
-        allConstants = true;
-        _.each(ast.arguments, function(arg) {
-          markConstantExpressions(arg);
-          allConstants = allConstants && arg.constant;
-        });
-        ast.constant = allConstants;
-      } else {
-        ast.constant = false;
-      }
+      var stateless = ast.filter && !filter(ast.callee.name).$stateful;
+      allConstants = !!stateless;
+      argsToWatch = [];
+
+      _.each(ast.arguments, function(arg) {
+        markConstantAndWatchExpressions(arg);
+        allConstants = allConstants && arg.constant;
+        if (!arg.constant) {
+          argsToWatch.push.apply(argsToWatch, arg.toWatch);
+        }
+      });
+      ast.constant = allConstants;
+      ast.toWatch = stateless ? argsToWatch : [ast];
       break;
     // ====================
     case AST.AssignmentExpression:
-    case AST.BinaryExpression:
-    case AST.LogicalExpression:
-      markConstantExpressions(ast.left);
-      markConstantExpressions(ast.right);
+      markConstantAndWatchExpressions(ast.left);
+      markConstantAndWatchExpressions(ast.right);
       ast.constant = ast.left.constant && ast.right.constant;
+      ast.toWatch = [ast];
+      break;
+    case AST.BinaryExpression:
+      markConstantAndWatchExpressions(ast.left);
+      markConstantAndWatchExpressions(ast.right);
+      ast.constant = ast.left.constant && ast.right.constant;
+      ast.toWatch = ast.left.toWatch.concat(ast.right.toWatch);
+      break;
+    case AST.LogicalExpression:
+      markConstantAndWatchExpressions(ast.left);
+      markConstantAndWatchExpressions(ast.right);
+      ast.constant = ast.left.constant && ast.right.constant;
+      ast.toWatch = [ast];
       break;
     // ====================
     case AST.UnaryExpression:
-      markConstantExpressions(ast.argument);
+      markConstantAndWatchExpressions(ast.argument);
       ast.constant = ast.argument.constant;
+      ast.toWatch = ast.argument.toWatch;
       break;
     // ====================
     case AST.ConditionalExpression:
-      markConstantExpressions(ast.test);
-      markConstantExpressions(ast.consequent);
-      markConstantExpressions(ast.alternate);
+      markConstantAndWatchExpressions(ast.test);
+      markConstantAndWatchExpressions(ast.consequent);
+      markConstantAndWatchExpressions(ast.alternate);
       ast.constant = ast.test.constant &&
                      ast.consequent.constant &&
                      ast.alternate.constant;
+      ast.toWatch = [ast];
       break;
   }
+}
+
+// Watch Delegates =============================================================
+
+function constantWatchDelegate(scope, listenerFn, valueEq, watchFn) {
+  var unwatch = scope.$watch(
+    function() {
+      return watchFn(scope);
+    },
+    function(newVal, oldVal, scope) {
+      if (_.isFunction(listenerFn)) {
+        listenerFn.apply(this, arguments);
+      }
+      unwatch();
+    },
+    valueEq
+  );
+  return unwatch;
+}
+
+function oneTimeWatchDelegate(scope, listenerFn, valueEq, watchFn) {
+  var lastValue;
+
+  var unwatch = scope.$watch(
+    function() {
+      return watchFn(scope);
+    },
+    function(newVal, oldVal, scope) {
+      lastValue = newVal;
+      if (_.isFunction(listenerFn)) {
+        listenerFn.apply(this, arguments);
+      }
+      if (!_.isUndefined(newVal)) {
+        scope.$$postDigest(function() {
+          if (!_.isUndefined(lastValue)) {
+            unwatch();
+          }
+        });
+      }
+    },
+    valueEq
+  );
+  return unwatch;
+}
+
+function oneTimeLiteralWatchDelegate(scope, listenerFn, valueEq, watchFn) {
+  var unwatch = scope.$watch(
+    function() {
+      return watchFn(scope);
+    },
+    function(newVal, oldVal, scope) {
+      if (_.isFunction(listenerFn)) {
+        listenerFn.apply(this, arguments);
+      }
+      if (isAllDefined(newVal)) {
+        scope.$$postDigest(function() {
+          if (isAllDefined(newVal)) {
+            unwatch();
+          }
+        });
+      }
+    }, valueEq
+  );
+  return unwatch;
+}
+
+function inputsWatchDelegate(scope, listenerFn, valueEq, watchFn) {
+  var inputExprs = watchFn.inputs;
+  var oldValues = _.times(inputExprs.length, _.constant(function(){}));
+  var lastResult;
+
+  return scope.$watch(function() {
+    var changed = false;
+    _.each(inputExprs, function(inputExpr, i) {
+      var newValue = inputExpr(scope);
+      if (changed || !expressionInputDirtyCheck(newValue, oldValues[i])) {
+        changed = true;
+        oldValues[i] = newValue;
+      }
+    });
+    if (changed) {
+      lastResult = watchFn(scope);
+    }
+    return lastResult;
+  }, listenerFn, valueEq);
 }
 
 // Lexer =======================================================================
@@ -651,23 +791,37 @@ function ASTCompiler(astBuilder) {
 
 ASTCompiler.prototype.compile = function(text) {
   var ast = this.astBuilder.ast(text);
-  markConstantExpressions(ast);
+  markConstantAndWatchExpressions(ast);
 
   this.state = {
-    body: [],
     nextId: 0,
-    vars: [],
-    filters: {}
+    fn: {body: [], vars: []},
+    filters: {},
+    inputs: []
   };
+
+  this.stage = 'inputs';
+  _.each(getInputs(ast.body), function(input, idx) {
+    var inputKey = '__fn' + idx;
+    this.state[inputKey] = {body: [], vars: []};
+    this.state.computing = inputKey;
+    this.state[inputKey].body.push('return ' + this.recurse(input) + ';');
+    this.state.inputs.push(inputKey);
+  }, this);
+  this.stage = 'main';
+  this.state.computing = 'fn';
+
   this.recurse(ast);
   /* jshint -W054 */
   var fnString = this.filterPrefix() +
     'var fn=function(s,l){' +
-    (this.state.vars.length ?
-      'var ' + this.state.vars.join(',') + ';' :
+    (this.state.fn.vars.length ?
+      'var ' + this.state.fn.vars.join(',') + ';' :
       ''
-    ) + this.state.body.join('') +
-    '}; return fn;';
+    ) + this.state.fn.body.join('') +
+    '};' +
+    this.watchFns() +
+    ' return fn;';
 
   var fn = new Function(
     'ensureSafeMemberName',
@@ -694,9 +848,9 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
   switch (ast.type) {
     case AST.Program:
       _.forEach(_.initial(ast.body), function(stmt) {
-        this.state.body.push(this.recurse(stmt), ';');
+        this.state[this.state.computing].body.push(this.recurse(stmt), ';');
       }, this);
-      this.state.body.push('return ', this.recurse(_.last(ast.body)), ';');
+      this.state[this.state.computing].body.push('return ', this.recurse(_.last(ast.body)), ';');
       break;
     // ====================
     case AST.Literal:
@@ -721,23 +875,26 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
     case AST.Identifier:
       ensureSafeMemberName(ast.name);
       intoId = this.nextId();
-      var localsHasProperty = this.getHasProperty('l', ast.name);
-      var scopeHasProperty = this.getHasProperty('s', ast.name);
-      this.if_(localsHasProperty,
-               this.assign(intoId, this.nonComputedMember('l', ast.name)));
+      var localsCheck;
+      if (this.stage === 'inputs') {
+        localsCheck = 'false';
+      } else {
+        localsCheck = this.getHasProperty('l', ast.name);
+      }
+      this.if_(localsCheck,
+        this.assign(intoId, this.nonComputedMember('l', ast.name)));
 
       if (create) {
-        var propInexistent = this.not(localsHasProperty) +
-              ' && s && ' +
-              this.not(scopeHasProperty);
-        this.if_(propInexistent,
-                 this.assign(this.nonComputedMember('s', ast.name), '{}'));
+        this.if_(this.not(localsCheck) +
+                 ' && s && ' +
+                 this.not(this.getHasProperty('s', ast.name)),
+          this.assign(this.nonComputedMember('s', ast.name), '{}'));
       }
 
-      this.if_(this.not(localsHasProperty) + ' && s ',
-               this.assign(intoId, this.nonComputedMember('s', ast.name)));
+      this.if_(this.not(localsCheck) + ' && s ',
+        this.assign(intoId, this.nonComputedMember('s', ast.name)));
       if (ctx) {
-        ctx.context = localsHasProperty + ' ?l:s';
+        ctx.context = localsCheck + ' ?l:s';
         ctx.name = ast.name;
         ctx.computed = false;
       }
@@ -845,7 +1002,7 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
     // ====================
     case AST.LogicalExpression:
       intoId = this.nextId();
-      this.state.body.push(this.assign(intoId, this.recurse(ast.left)));
+      this.state[this.state.computing].body.push(this.assign(intoId, this.recurse(ast.left)));
       this.if_(ast.operator == '&&' ? intoId : this.not(intoId),
         this.assign(intoId, this.recurse(ast.right)));
       return intoId;
@@ -853,7 +1010,7 @@ ASTCompiler.prototype.recurse = function(ast, ctx, create) {
     case AST.ConditionalExpression:
       intoId = this.nextId();
       var testId = this.nextId();
-      this.state.body.push(this.assign(testId, this.recurse(ast.test)));
+      this.state[this.state.computing].body.push(this.assign(testId, this.recurse(ast.test)));
       this.if_(testId,
         this.assign(intoId, this.recurse(ast.consequent)));
       this.if_(this.not(testId),
@@ -887,7 +1044,9 @@ ASTCompiler.prototype.computedMember = function(left, right) {
 };
 
 ASTCompiler.prototype.if_ = function(test, consequent) {
-  this.state.body.push('if(', test, '){', consequent, '}');
+  this.state[this.state.computing].body.push(
+    'if(', test, '){', consequent, '}'
+  );
 };
 ASTCompiler.prototype.assign = function(id, value) {
   return id + '=' + value + ';';
@@ -906,19 +1065,25 @@ ASTCompiler.prototype.getHasProperty = function(o, prop) {
 ASTCompiler.prototype.nextId = function(skip) {
   var id = '__v' + (this.state.nextId++);
   if (!skip) {
-    this.state.vars.push(id);
+    this.state[this.state.computing].vars.push(id);
   }
   return id;
 };
 
 ASTCompiler.prototype.addEnsureSafeMemberName = function(expr) {
-  this.state.body.push('ensureSafeMemberName(' + expr + ');');
+  this.state[this.state.computing].body.push(
+    'ensureSafeMemberName(' + expr + ');'
+  );
 };
 ASTCompiler.prototype.addEnsureSafeObject = function(expr) {
-  this.state.body.push('ensureSafeObject(' + expr + ');');
+  this.state[this.state.computing].body.push(
+    'ensureSafeObject(' + expr + ');'
+  );
 };
 ASTCompiler.prototype.addEnsureSafeFunction = function(expr) {
-  this.state.body.push('ensureSafeFunction(' + expr + ');');
+  this.state[this.state.computing].body.push(
+    'ensureSafeFunction(' + expr + ');'
+  );
 };
 
 ASTCompiler.prototype.filter = function(name) {
@@ -939,6 +1104,23 @@ ASTCompiler.prototype.filterPrefix = function() {
   }
 };
 
+ASTCompiler.prototype.watchFns = function() {
+  var result = [];
+  _.each(this.state.inputs, function(inputName) {
+    result.push('var ', inputName, ' = function(s) {',
+      (this.state[inputName].vars.length ?
+        'var ' + this.state[inputName].vars.join(',') + ';' :
+        ''
+      ),
+      this.state[inputName].body.join(''),
+    '};');
+  }, this);
+  if (result.length) {
+    result.push('fn.inputs = [', this.state.inputs.join(','), '];');
+  }
+  return result.join('');
+};
+
 // Parser ======================================================================
 
 function Parser(lexer) {
@@ -956,7 +1138,23 @@ function parse(expr) {
     case 'string':
       var lexer = new Lexer();
       var parser = new Parser(lexer);
-      return parser.parse(expr);
+
+      var oneTime = false;
+      if (expr.charAt(0) === ':' && expr.charAt(1) === ':') {
+        oneTime = true;
+        expr = expr.substring(2);
+      }
+
+      var parseFn = parser.parse(expr);
+      if (parseFn.constant) {
+        parseFn.$$watchDelegate = constantWatchDelegate;
+      } else if (oneTime) {
+        parseFn.$$watchDelegate = parseFn.literal ? oneTimeLiteralWatchDelegate :
+                                                    oneTimeWatchDelegate;
+      } else if (parseFn.inputs) {
+        parseFn.$$watchDelegate = inputsWatchDelegate;
+      }
+      return parseFn;
     case 'function':
       return expr;
     default:
